@@ -15,32 +15,7 @@ A Github action for using the upload service client, `usc`.
 ### Action
 
 ```yaml
-# Deploy contents of build directory to dev (using OIDC — no long-lived AWS credentials needed)
-# Requires: permissions: id-token: write at the job level
-# and an AWS IAM role configured to trust your GitHub repository via OIDC.
-# To get your OIDC role set up, reach out in #exp-platform-framework-pub on Slack.
-- name: Configure AWS credentials via OIDC
-  uses: aws-actions/configure-aws-credentials@v4
-  with:
-    role-to-assume: arn:aws:iam::179942336946:role/my-iam-username-oidc-role
-    aws-region: eu-west-1 # Required by the action but can be any valid region — the USC target account is managed separately
-
-- name: Deploy to Dev
-  if: github.ref == 'refs/heads/master'
-  uses: ingka-group-digital/usc-gha@latest
-  with:
-    cmd: "upload"
-    src: "build"
-    target: "my-target"
-    info_git: "https://github.com/my-org/my-repo"
-    info_slack: "#project-slack-channel"
-    info_email: "project@email.com"
-    info_team: "team-name"
-    info_product: "product-name"
-```
-
-```yaml
-# Deploy contents of build directory to dev (using static AWS credentials)
+# Deploy contents of build directory to dev
 - name: Deploy to Dev
   if: github.ref == 'refs/heads/master'
   uses: ingka-group-digital/usc-gha@latest
@@ -50,42 +25,6 @@ A Github action for using the upload service client, `usc`.
     cmd: "upload"
     src: "build"
     target: "my-target"
-    info_git: "https://github.com/my-org/my-repo"
-    info_slack: "#project-slack-channel"
-    info_email: "project@email.com"
-    info_team: "team-name"
-    info_product: "product-name"
-```
-
-```yaml
-# Delete files older than 1 week
-- name: Delete old files
-  uses: ingka-group-digital/usc-gha@latest
-  with:
-    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
-    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
-    cmd: "delete"
-    target: "my-target"
-    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
-    info_git: "https://github.com/my-org/my-repo"
-    info_slack: "#project-slack-channel"
-    info_email: "project@email.com"
-    info_team: "team-name"
-    info_product: "product-name"
-```
-
-```yaml
-# Get detailed list of files older than 1 week limited to 100 files
-- name: List files
-  uses: ingka-group-digital/usc-gha@latest
-  with:
-    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
-    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
-    cmd: "list"
-    target: "my-target"
-    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
-    recursive: "true"
-    extra_options: "--long --limit 100"
     info_git: "https://github.com/my-org/my-repo"
     info_slack: "#project-slack-channel"
     info_email: "project@email.com"
@@ -106,10 +45,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
         with:
-          node-version: 18
+          node-version: "12.x"
       - name: Dump GitHub context, for debugging
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
@@ -168,11 +107,11 @@ jobs:
 
 | Name                  | Description                                                                                                       | Default  |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------- | -------- |
-| aws_access_key        | The AWS_ACCESS_KEY_ID (not needed when using OIDC)                                                                | optional |
-| aws_secret_access_key | The AWS_SECRET_ACCESS_KEY (not needed when using OIDC)                                                            | optional |
+| aws_access_key        | The AWS_ACCESS_KEY_ID                                                                                             | required |
+| aws_secret_access_key | 'The AWS_SECRET_ACCESS_KEY'                                                                                       | required |
 | cmd                   | 'The command to run'                                                                                              | 'upload' |
 | debug                 | 'Debug output'                                                                                                    | false    |
-| src                   | 'root directory of files'                                                                                         | required for update and optional for delete |
+| src                   | 'root directory of files'                                                                                         | required |
 | ignore_empty          | 'ignore errors cause by empty file list'                                                                          | false    |
 | dry                   | 'dry run, only output files to be uploaded'                                                                       | false    |
 | files                 | 'Comma-separated list of files to wait upload'                                                                    | optional |
@@ -190,4 +129,3 @@ jobs:
 | older                 | Files must be older than this date, format: https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go' | optional |
 | includes              | Files must match this regexp                                                                                      | optional |
 | excludes              | Files must NOT match this regexp                                                                                  | optional |
-| extra_options         | Extra options not supported by all commands                | optional |
