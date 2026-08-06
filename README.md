@@ -1,6 +1,6 @@
 # usc-gha
 
-:warning: Deprecated, use to https://github.com/ingka-group-digital/usc-gha
+:warning: Deprecated, use https://github.com/ingka-group-digital/usc-gha
 
 A Github action for using the upload service client, `usc`.
 
@@ -8,23 +8,78 @@ A Github action for using the upload service client, `usc`.
 
 - Add an action below to your workflow.
 - Change the code to fit your project and paths.
-- Add the required secrets, the AWS keys, to your Github project.
+- Configure authentication using either AWS keys in GitHub secrets or an AWS IAM role for GitHub OIDC.
 - Push it, then watch the Action tab on Github.
 - Debug whatever problems you get.
 
 ### Action
 
 ```yaml
-# Deploy contents of build directory to dev
+# Deploy contents of build directory to dev (using OIDC - no long-lived AWS credentials needed)
+# Requires: permissions: id-token: write at the job level
+# and an AWS IAM role configured to trust your GitHub repository via OIDC.
 - name: Deploy to Dev
   if: github.ref == 'refs/heads/master'
-  uses: ingka-group-digital/usc-gha@latest
+  uses: mammutmw/usc-gha@latest
+  with:
+    oidc_role_arn: my-iam-username # also accepts a full ARN
+    cmd: "upload"
+    src: "build"
+    target: "my-target"
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
+```yaml
+# Deploy contents of build directory to dev (using static AWS credentials)
+- name: Deploy to Dev
+  if: github.ref == 'refs/heads/master'
+  uses: mammutmw/usc-gha@latest
   with:
     aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
     aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
     cmd: "upload"
     src: "build"
     target: "my-target"
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
+```yaml
+# Delete files older than 1 week
+- name: Delete old files
+  uses: mammutmw/usc-gha@latest
+  with:
+    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
+    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+    cmd: "delete"
+    target: "my-target"
+    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
+```yaml
+# Get detailed list of files older than 1 week limited to 100 files
+- name: List files
+  uses: mammutmw/usc-gha@latest
+  with:
+    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
+    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+    cmd: "list"
+    target: "my-target"
+    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
+    recursive: "true"
+    extra_options: "--long --limit 100"
     info_git: "https://github.com/my-org/my-repo"
     info_slack: "#project-slack-channel"
     info_email: "project@email.com"
@@ -45,10 +100,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
         with:
-          node-version: "12.x"
+          node-version: 18
       - name: Dump GitHub context, for debugging
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
@@ -73,7 +128,7 @@ jobs:
         # Deploy contents of build directory to dev
       - name: Deploy to CTE
         if: github.ref == 'refs/heads/master'
-        uses: ingka-group-digital/usc-gha@latest
+        uses: mammutmw/usc-gha@latest
         with:
           aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
           aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
@@ -89,7 +144,7 @@ jobs:
         # Deploy contents of build directory prod
       - name: Deploy to PROD
         if: github.ref == 'refs/heads/release'
-        uses: ingka-group-digital/usc-gha@latest
+        uses: mammutmw/usc-gha@latest
         with:
           aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
           aws_secret_access_key: ${{secrets.AWS_ACCESS_KEY_SECRET}}
@@ -107,11 +162,11 @@ jobs:
 
 | Name                  | Description                                                                                                       | Default  |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------- | -------- |
-| aws_access_key        | The AWS_ACCESS_KEY_ID                                                                                             | required |
-| aws_secret_access_key | 'The AWS_SECRET_ACCESS_KEY'                                                                                       | required |
+| aws_access_key        | The AWS_ACCESS_KEY_ID (not needed when using OIDC)                                                                | optional |
+| aws_secret_access_key | The AWS_SECRET_ACCESS_KEY (not needed when using OIDC)                                                            | optional |
 | cmd                   | 'The command to run'                                                                                              | 'upload' |
 | debug                 | 'Debug output'                                                                                                    | false    |
-| src                   | 'root directory of files'                                                                                         | required |
+| src                   | 'root directory of files'                                                                                         | required for update and optional for delete |
 | ignore_empty          | 'ignore errors cause by empty file list'                                                                          | false    |
 | dry                   | 'dry run, only output files to be uploaded'                                                                       | false    |
 | files                 | 'Comma-separated list of files to wait upload'                                                                    | optional |
@@ -129,3 +184,5 @@ jobs:
 | older                 | Files must be older than this date, format: https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go' | optional |
 | includes              | Files must match this regexp                                                                                      | optional |
 | excludes              | Files must NOT match this regexp                                                                                  | optional |
+| extra_options         | Extra options not supported by all commands                                                                       | optional |
+| oidc_role_arn         | IAM role to assume via OIDC, as a short role name or full ARN                                                    | optional |
