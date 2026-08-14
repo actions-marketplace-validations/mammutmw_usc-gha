@@ -1,15 +1,26 @@
 ---
-name: 'mammutmw/usc-gha'
+name: 'ingka-group-digital/usc'
 description: 'Upload files with the upload service client'
 branding:
   icon: 'upload'
   color: 'red'
 inputs:
+  # AWS authentication — provide EITHER oidc_role OR aws_access_key/aws_secret_access_key
+  #
+  # When using oidc_role, the calling workflow job must set:
+  #   permissions:
+  #     id-token: write  # allows GitHub Actions to request a JWT from GitHub's OIDC provider,
+  #                      # which is exchanged for temporary AWS credentials via STS
+  #     contents: read   # required by actions/checkout and recommended as a baseline for any
+  #                      # job accessing repository contents
+  oidc_role:
+    description: 'IAM role to assume via OIDC. Accepts either a short name (e.g. "xyz", expanded to arn:aws:iam::179942336946:role/xyz-oidc-role) or a full ARN (arn:aws:iam::...). Mutually exclusive with aws_access_key/aws_secret_access_key.'
+    required: false
   aws_access_key:
-    description: 'The AWS_ACCESS_KEY_ID'
+    description: 'The AWS_ACCESS_KEY_ID. Mutually exclusive with oidc_role.'
     required: false
   aws_secret_access_key:
-    description: 'The AWS_SECRET_ACCESS_KEY'
+    description: 'The AWS_SECRET_ACCESS_KEY. Mutually exclusive with oidc_role.'
     required: false
   cmd:
     description: 'The command to run'
@@ -85,27 +96,24 @@ inputs:
     description: 'Extra options not supported by all commands'
     required: false
     default: ''
-  oidc_role_arn:
-    description: 'IAM role to assume via OIDC. Accepts either a short name (e.g. "xyz", expanded to arn:aws:iam::179942336946:role/xyz-oidc-role) or a full ARN. If set, AWS OIDC authentication is performed before the upload. Mutually exclusive with aws_access_key/aws_secret_access_key.'
-    required: false
 
 runs:
   using: 'composite'
   steps:
     - name: Resolve OIDC role ARN
-      if: ${{ inputs.oidc_role_arn != '' }}
+      if: ${{ inputs.oidc_role != '' }}
       id: resolve_role
       shell: bash
       run: |
-        role='${{ inputs.oidc_role_arn }}'
+        role='${{ inputs.oidc_role }}'
         if [[ "$role" != arn:* ]]; then
           role="arn:aws:iam::179942336946:role/${role}-oidc-role"
         fi
         echo "arn=$role" >> "$GITHUB_OUTPUT"
 
     - name: Configure AWS credentials via OIDC
-      if: ${{ inputs.oidc_role_arn != '' }}
-      uses: aws-actions/configure-aws-credentials@v4
+      if: ${{ inputs.oidc_role != '' }}
+      uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
       with:
         role-to-assume: ${{ steps.resolve_role.outputs.arn }}
         aws-region: eu-west-1
@@ -134,22 +142,12 @@ runs:
         USC_INCLUDES: ${{ inputs.includes }}
         USC_EXCLUDES: ${{ inputs.excludes }}
         USC_EXTRA_OPTIONS: ${{ inputs.extra_options }}
-        USC_OIDC_ROLE_ARN: ${{ inputs.oidc_role_arn }}
         USC_AWS_ACCESS_KEY: ${{ inputs.aws_access_key }}
         USC_AWS_SECRET_KEY: ${{ inputs.aws_secret_access_key }}
       run: |
-        if [[ -n "$USC_OIDC_ROLE_ARN" && ( -n "$USC_AWS_ACCESS_KEY" || -n "$USC_AWS_SECRET_KEY" ) ]]; then
-          echo "oidc_role_arn cannot be combined with aws_access_key or aws_secret_access_key" >&2
-          exit 1
-        fi
-
+        # If OIDC already populated AWS_ACCESS_KEY_ID, keep it; otherwise use static creds.
         export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-$USC_AWS_ACCESS_KEY}"
         export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-$USC_AWS_SECRET_KEY}"
-
-        if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
-          echo "Provide aws_access_key/aws_secret_access_key or oidc_role_arn" >&2
-          exit 1
-        fi
 
         extra_args=()
         if [[ -n "$USC_EXTRA_OPTIONS" ]]; then
