@@ -1,6 +1,6 @@
 # usc-gha
 
-:warning: Deprecated, use to https://github.com/ingka-group-digital/usc-gha
+:warning: Deprecated, use https://github.com/ingka-group-digital/usc-gha
 
 A Github action for using the upload service client, `usc`.
 
@@ -15,10 +15,30 @@ A Github action for using the upload service client, `usc`.
 ### Action
 
 ```yaml
-# Deploy contents of build directory to dev
+# Deploy contents of build directory to dev (using OIDC — no long-lived AWS credentials needed)
+# Requires: permissions: id-token: write at the job level
+# and an AWS IAM role configured to trust your GitHub repository via OIDC.
+# To get your OIDC role set up, reach out in #exp-platform-framework-pub on Slack.
 - name: Deploy to Dev
   if: github.ref == 'refs/heads/master'
-  uses: ingka-group-digital/usc-gha@latest
+  uses: mammutmw/usc-gha@<full SHA>
+  with:
+    oidc_role: "<my-usc-username>-oidc-role" # or pass a full ARN: arn:aws:iam::179942336946:role/<my-usc-username>-oidc-role
+    cmd: "upload"
+    src: "build"
+    target: "my-target"
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
+```yaml
+# Deploy contents of build directory to dev (using static AWS credentials)
+- name: Deploy to Dev
+  if: github.ref == 'refs/heads/master'
+  uses: mammutmw/usc-gha@<full SHA>
   with:
     aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
     aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
@@ -31,6 +51,43 @@ A Github action for using the upload service client, `usc`.
     info_team: "team-name"
     info_product: "product-name"
 ```
+
+```yaml
+# Delete files older than 1 week
+- name: Delete old files
+  uses: mammutmw/usc-gha@<full SHA>
+  with:
+    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
+    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+    cmd: "delete"
+    target: "my-target"
+    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
+```yaml
+# Get detailed list of files older than 1 week limited to 100 files
+- name: List files
+  uses: mammutmw/usc-gha@<full SHA>
+  with:
+    aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
+    aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+    cmd: "list"
+    target: "my-target"
+    older: "1 week ago" # https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go
+    recursive: "true"
+    extra_options: "--long --limit 100"
+    info_git: "https://github.com/my-org/my-repo"
+    info_slack: "#project-slack-channel"
+    info_email: "project@email.com"
+    info_team: "team-name"
+    info_product: "product-name"
+```
+
 
 ### Example workflow
 
@@ -45,10 +102,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "12.x"
+          node-version: 24
       - name: Dump GitHub context, for debugging
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
@@ -70,32 +127,16 @@ jobs:
       - name: List the files in your build, for debugging
         run: find build -print
 
-        # Deploy contents of build directory to dev
-      - name: Deploy to CTE
-        if: github.ref == 'refs/heads/master'
-        uses: ingka-group-digital/usc-gha@latest
+        # Deploy contents of build directory to CTE (master) or PROD (release)
+      - name: Deploy
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/release'
+        uses: mammutmw/usc-gha@<full SHA>
         with:
           aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
           aws_secret_access_key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
           cmd: "upload"
           src: "build"
-          target: "my-target"
-          info_git: "https://github.com/my-org/my-repo"
-          info_slack: "#project-slack-channel"
-          info_email: "project@email.com"
-          info_team: "team-name"
-          info_product: "product-name"
-
-        # Deploy contents of build directory prod
-      - name: Deploy to PROD
-        if: github.ref == 'refs/heads/release'
-        uses: ingka-group-digital/usc-gha@latest
-        with:
-          aws_access_key: ${{secrets.AWS_ACCESS_KEY_ID}}
-          aws_secret_access_key: ${{secrets.AWS_ACCESS_KEY_SECRET}}
-          cmd: "upload"
-          src: "build"
-          target: "my-prod-target"
+          target: ${{github.ref == 'refs/heads/release' && 'my-prod-target' || 'my-target'}}
           info_git: "https://github.com/my-org/my-repo"
           info_slack: "#project-slack-channel"
           info_email: "project@email.com"
@@ -107,11 +148,12 @@ jobs:
 
 | Name                  | Description                                                                                                       | Default  |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------- | -------- |
-| aws_access_key        | The AWS_ACCESS_KEY_ID                                                                                             | required |
-| aws_secret_access_key | 'The AWS_SECRET_ACCESS_KEY'                                                                                       | required |
+| oidc_role             | IAM role to assume via OIDC. Short name (e.g. `my-service`) expanded to full ARN, or full ARN. Mutually exclusive with `aws_access_key`/`aws_secret_access_key`. Job must set `permissions: id-token: write`. | optional |
+| aws_access_key        | The AWS_ACCESS_KEY_ID. Mutually exclusive with `oidc_role`.                                                       | optional |
+| aws_secret_access_key | The AWS_SECRET_ACCESS_KEY. Mutually exclusive with `oidc_role`.                                                   | optional |
 | cmd                   | 'The command to run'                                                                                              | 'upload' |
 | debug                 | 'Debug output'                                                                                                    | false    |
-| src                   | 'root directory of files'                                                                                         | required |
+| src                   | 'root directory of files'                                                                                         | required for update and optional for delete |
 | ignore_empty          | 'ignore errors cause by empty file list'                                                                          | false    |
 | dry                   | 'dry run, only output files to be uploaded'                                                                       | false    |
 | files                 | 'Comma-separated list of files to wait upload'                                                                    | optional |
@@ -129,3 +171,8 @@ jobs:
 | older                 | Files must be older than this date, format: https://github.com/tj/go-naturaldate/blob/master/naturaldate_test.go' | optional |
 | includes              | Files must match this regexp                                                                                      | optional |
 | excludes              | Files must NOT match this regexp                                                                                  | optional |
+| extra_options         | Extra options not supported by all commands                | optional |
+
+## Releasing a new version
+
+Refer to the release steps in https://github.com/ingka-group-digital/usc-gha.

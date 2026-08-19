@@ -5,12 +5,23 @@ branding:
   icon: 'upload'
   color: 'red'
 inputs:
+  # AWS authentication — provide EITHER oidc_role OR aws_access_key/aws_secret_access_key
+  #
+  # When using oidc_role, the calling workflow job must set:
+  #   permissions:
+  #     id-token: write  # allows GitHub Actions to request a JWT from GitHub's OIDC provider,
+  #                      # which is exchanged for temporary AWS credentials via STS
+  #     contents: read   # required by actions/checkout and recommended as a baseline for any
+  #                      # job accessing repository contents
+  oidc_role:
+    description: 'IAM role to assume via OIDC. Accepts either a short name (e.g. "xyz", expanded to arn:aws:iam::179942336946:role/xyz-oidc-role) or a full ARN (arn:aws:iam::...). Mutually exclusive with aws_access_key/aws_secret_access_key.'
+    required: false
   aws_access_key:
-    description: 'The AWS_ACCESS_KEY_ID'
-    required: true
+    description: 'The AWS_ACCESS_KEY_ID. Mutually exclusive with oidc_role.'
+    required: false
   aws_secret_access_key:
-    description: 'The AWS_SECRET_ACCESS_KEY'
-    required: true
+    description: 'The AWS_SECRET_ACCESS_KEY. Mutually exclusive with oidc_role.'
+    required: false
   cmd:
     description: 'The command to run'
     required: true
@@ -21,7 +32,8 @@ inputs:
     default: 'false'
   src:
     description: 'root directory of files'
-    required: true
+    required: false
+    default: ''
   ignore_empty:
     description: 'ignore errors cause by empty file list'
     required: false
@@ -80,31 +92,93 @@ inputs:
   excludes:
     description: 'Files must NOT match this regexp'
     required: false
+  extra_options:
+    description: 'Extra options not supported by all commands'
+    required: false
+    default: ''
 
 runs:
-  using: 'docker'
-  image: 'docker://ghcr.io/mammutmw/usc'
-  env:
-    AWS_ACCESS_KEY_ID: ${{inputs.aws_access_key}}
-    AWS_SECRET_ACCESS_KEY: ${{inputs.aws_secret_access_key}}
-  args:
-    - '${{inputs.cmd}}'
-    - '--debug=${{inputs.debug}}'
-    - '--src=${{inputs.src}}'
-    - '--ignore-empty=${{inputs.ignore_empty}}'
-    - '--dry=${{inputs.dry}}'
-    - '--files=${{inputs.files}}'
-    - '--target=${{inputs.target}}'
-    - '--timeout=${{inputs.timeout}}'
-    - '--verbose=${{inputs.verbose}}'
-    - '--wait=${{inputs.wait}}'
-    - '--recursive=${{inputs.recursive}}'
-    - '--info-git=${{inputs.info_git}}'
-    - '--info-slack=${{inputs.info_slack}}'
-    - '--info-email=${{inputs.info_email}}'
-    - '--info-team=${{inputs.info_team}}'
-    - '--info-product=${{inputs.info_product}}'
-    - '--newer=${{inputs.newer}}'
-    - '--older=${{inputs.older}}'
-    - '--includes=${{inputs.includes}}'
-    - '--excludes=${{inputs.excludes}}'
+  using: 'composite'
+  steps:
+    - name: Resolve OIDC role ARN
+      if: ${{ inputs.oidc_role != '' }}
+      id: resolve_role
+      shell: bash
+      run: |
+        role='${{ inputs.oidc_role }}'
+        if [[ "$role" != arn:* ]]; then
+          role="arn:aws:iam::179942336946:role/${role}-oidc-role"
+        fi
+        echo "arn=$role" >> "$GITHUB_OUTPUT"
+
+    - name: Configure AWS credentials via OIDC
+      if: ${{ inputs.oidc_role != '' }}
+      uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+      with:
+        role-to-assume: ${{ steps.resolve_role.outputs.arn }}
+        aws-region: eu-west-1
+
+    - name: Upload with USC
+      shell: bash
+      env:
+        USC_CMD: ${{ inputs.cmd }}
+        USC_DEBUG: ${{ inputs.debug }}
+        USC_SRC: ${{ inputs.src }}
+        USC_IGNORE_EMPTY: ${{ inputs.ignore_empty }}
+        USC_DRY: ${{ inputs.dry }}
+        USC_FILES: ${{ inputs.files }}
+        USC_TARGET: ${{ inputs.target }}
+        USC_TIMEOUT: ${{ inputs.timeout }}
+        USC_VERBOSE: ${{ inputs.verbose }}
+        USC_WAIT: ${{ inputs.wait }}
+        USC_RECURSIVE: ${{ inputs.recursive }}
+        USC_INFO_GIT: ${{ inputs.info_git }}
+        USC_INFO_SLACK: ${{ inputs.info_slack }}
+        USC_INFO_EMAIL: ${{ inputs.info_email }}
+        USC_INFO_TEAM: ${{ inputs.info_team }}
+        USC_INFO_PRODUCT: ${{ inputs.info_product }}
+        USC_NEWER: ${{ inputs.newer }}
+        USC_OLDER: ${{ inputs.older }}
+        USC_INCLUDES: ${{ inputs.includes }}
+        USC_EXCLUDES: ${{ inputs.excludes }}
+        USC_EXTRA_OPTIONS: ${{ inputs.extra_options }}
+        USC_AWS_ACCESS_KEY: ${{ inputs.aws_access_key }}
+        USC_AWS_SECRET_KEY: ${{ inputs.aws_secret_access_key }}
+      run: |
+        # If OIDC already populated AWS_ACCESS_KEY_ID, keep it; otherwise use static creds.
+        export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-$USC_AWS_ACCESS_KEY}"
+        export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-$USC_AWS_SECRET_KEY}"
+
+        extra_args=()
+        if [[ -n "$USC_EXTRA_OPTIONS" ]]; then
+          read -ra extra_args <<< "$USC_EXTRA_OPTIONS"
+        fi
+
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+          -w "$GITHUB_WORKSPACE" \
+          -e AWS_ACCESS_KEY_ID \
+          -e AWS_SECRET_ACCESS_KEY \
+          -e AWS_SESSION_TOKEN \
+          ghcr.io/mammutmw/usc \
+          "$USC_CMD" \
+          "--debug=$USC_DEBUG" \
+          "--src=$USC_SRC" \
+          "--ignore-empty=$USC_IGNORE_EMPTY" \
+          "--dry=$USC_DRY" \
+          "--files=$USC_FILES" \
+          "--target=$USC_TARGET" \
+          "--timeout=$USC_TIMEOUT" \
+          "--verbose=$USC_VERBOSE" \
+          "--wait=$USC_WAIT" \
+          "--recursive=$USC_RECURSIVE" \
+          "--info-git=$USC_INFO_GIT" \
+          "--info-slack=$USC_INFO_SLACK" \
+          "--info-email=$USC_INFO_EMAIL" \
+          "--info-team=$USC_INFO_TEAM" \
+          "--info-product=$USC_INFO_PRODUCT" \
+          "--newer=$USC_NEWER" \
+          "--older=$USC_OLDER" \
+          "--includes=$USC_INCLUDES" \
+          "--excludes=$USC_EXCLUDES" \
+          "${extra_args[@]}"
